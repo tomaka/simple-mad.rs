@@ -1,74 +1,59 @@
 extern crate gcc;
 extern crate pkg_config;
 
-use std::process::Command;
-use std::path::Path;
 use std::env;
 
 fn main() {
-    let out_dir_str = env::var("OUT_DIR").unwrap();
-    let out_dir = Path::new(&out_dir_str);
-
     match pkg_config::find_library("mad") {
         Ok(_) => return,
         Err(..) => {}
     };
 
-    if cfg!(windows) {
-        panic!("libmad could not be found. Building libmad automatically on Windows not implemented yet. Please install libmad manually.");
-    }
+    // attempt to compile libmad manually
+    let mut gcc = gcc::Config::new();
+    gcc.include("libmad-src");
 
-    match env::set_current_dir("libmad-src") {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    let target = env::var("TARGET").unwrap();
 
-    match Command::new("mkdir").arg("temp").output() {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    if target.contains("i686") {
+        gcc.define("FPM_INTEL", None);
+        gcc.define("ASO_ZEROCHECK", None);
 
-    match Command::new("tar").arg("-xzf")
-                             .arg("libmad-0.15.1b.patched.tar.gz")
-                             .arg("-C")
-                             .arg("temp")
-                             .output() {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    } else if target.contains("x86_64") {
+        gcc.define("FPM_64BIT", None);
 
-    match env::set_current_dir("temp/libmad-0.15.1b/") {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    } else if target.contains("arm") {
+        gcc.define("FPM_ARM", None);
+        // TODO: I'm not sure if compiling assembly works
+        //gcc.define("ASO_INTERLEAVE1", None);
+        //gcc.define("ASO_IMDCT", None);
+        //gcc.file("libmad-src/imdct_l_arm.S");
 
-    Command::new("./configure")
-        .args(&["--disable-shared", "--enable-static"]) // Only build static lib
-        .args(&["--prefix", out_dir.to_str().unwrap()]) // Install on the outdir
-        .arg("--with-pic") // Build position-independent code (required by Rust)
-        .output()
-        .unwrap();
+    } else if target.contains("mips") {
+        gcc.define("FPM_MIPS", None);
+        gcc.define("ASO_INTERLEAVE2", None);
+        gcc.define("ASO_ZEROCHECK", None);
 
-    match Command::new("make").output() {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    } else if target.contains("sparc") {
+        gcc.define("FPM_SPARC", None);
 
-    match Command::new("make").arg("install").output() {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    } else if target.contains("ppc") || target.contains("powerpc") {
+        gcc.define("FPM_PPC", None);
 
-    match env::set_current_dir("../..") {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
+    } else {
+        gcc.define("FPM_DEFAULT", None);
+    };
 
-    match Command::new("rm").arg("-rf").arg("temp").output() {
-        Ok(_) => {},
-        Err(e) => panic!("{}", e)
-    }
-
-    let out_str = out_dir.to_str().unwrap();
-    println!("cargo:rustc-flags=-L native={}/lib -l static=mad", out_str);
+    gcc.file("libmad-src/version.c")
+       .file("libmad-src/fixed.c")
+       .file("libmad-src/bit.c")
+       .file("libmad-src/timer.c")
+       .file("libmad-src/stream.c")
+       .file("libmad-src/frame.c")
+       .file("libmad-src/synth.c")
+       .file("libmad-src/decoder.c")
+       .file("libmad-src/layer12.c")
+       .file("libmad-src/layer3.c")
+       .file("libmad-src/huffman.c")
+       .compile("libmad.a");  // the official name is `libmad.la` but gcc-rs forbids that
 }
